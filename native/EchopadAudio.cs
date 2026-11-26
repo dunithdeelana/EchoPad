@@ -298,7 +298,7 @@ namespace Echopad
               .Append(",\"driverService\":").Append(DriverServiceInstalled() ? "true" : "false")
               .Append(",\"driverFile\":").Append(DriverFileExists() ? "true" : "false")
               .Append(",\"pnp\":").Append(PnpJson())
-              .Append(",\"os\":").Append(J(Environment.OSVersion.VersionString)).Append('}');
+              .Append(",\"os\":").Append(J(WindowsVersion())).Append('}');
             return sb.ToString();
         }
 
@@ -353,10 +353,33 @@ namespace Echopad
             return false;
         }
 
+        // Environment.OSVersion reports 6.2 without an app manifest; read the real build from the registry.
+        static string WindowsVersion()
+        {
+            try
+            {
+                using (var k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                {
+                    if (k != null)
+                        return string.Format("{0} {1} (build {2}.{3})", k.GetValue("ProductName"), k.GetValue("DisplayVersion"),
+                                             k.GetValue("CurrentBuild"), k.GetValue("UBR"));
+                }
+            }
+            catch { }
+            return Environment.OSVersion.VersionString;
+        }
+
         static bool DriverFileExists()
         {
             string drivers = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "drivers");
-            try { return Directory.GetFiles(drivers, "vbaudio_cable*.sys").Length > 0; } catch { return false; }
+            try
+            {
+                if (Directory.GetFiles(drivers, "vbaudio_cable*.sys").Length > 0) return true;
+                // Universal drivers run from the DriverStore instead of System32\drivers.
+                string store = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "DriverStore", "FileRepository");
+                return Directory.GetDirectories(store, "vbmmecable64*").Length > 0;
+            }
+            catch { return false; }
         }
 
         // The VB-CABLE device node as Device Manager sees it: present? error code (22 = disabled, 52 = signature, ...)
@@ -505,12 +528,20 @@ namespace Echopad
             try { return X509Certificate.CreateFromSignedFile(path).Subject; } catch { return ""; }
         }
 
+        // VB-Audio's code-signing certificate names the author as "BUREL VINCENT Entrepreneur individuel"
+        // (verified on a real Windows VM). Accept the author's name in either order, or "VB-Audio",
+        // and only together with a valid Authenticode chain (trust == 0).
+        static bool IsVbAudioSigner(string subject)
+        {
+            string s = (subject ?? "").ToUpperInvariant();
+            return (s.Contains("BUREL") && s.Contains("VINCENT")) || s.Contains("VB-AUDIO");
+        }
+
         static bool IsTrustedVbAudio(string path, out int trust, out string signer)
         {
             trust = TrustResult(path);
             signer = Signer(path);
-            return trust == 0 && (signer.IndexOf("Vincent Burel", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                  signer.IndexOf("VB-Audio", StringComparison.OrdinalIgnoreCase) >= 0);
+            return trust == 0 && IsVbAudioSigner(signer);
         }
 
         static string Verify(string path)

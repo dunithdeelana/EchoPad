@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('echopad', {
   systemAction: (action) => ipcRenderer.invoke('system:action', action),
   onSystemReport: (cb) => on('system:report', cb),
   copyDiagnostics: () => ipcRenderer.invoke('system:copy-diagnostics'),
+  reportProblem: () => ipcRenderer.invoke('system:report-problem'),
+  openLogs: () => ipcRenderer.invoke('system:open-logs'),
+  log: (level, msg) => ipcRenderer.send('app:log', level, msg),
 
   minimize: () => ipcRenderer.send('window:minimize'),
   toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
