@@ -1,0 +1,5 @@
+node_modules/
+dist/
+release/
+installer/uninstall-files.nsh
+*.log
