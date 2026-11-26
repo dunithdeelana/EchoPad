@@ -317,10 +317,15 @@ class AudioEngine {
       if (req !== this.micRequest) return;
       this.teardownMic();
       this.status.micActive = false;
+      const name = err instanceof DOMException ? err.name : '';
       this.status.micError =
-        err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Microphone access was denied.'
-          : 'Could not open the microphone.';
+        name === 'NotAllowedError' || name === 'SecurityError'
+          ? 'Windows is blocking microphone access. Open Windows Settings → Privacy & security → Microphone and turn on “Let desktop apps access your microphone”.'
+          : name === 'NotFoundError' || name === 'OverconstrainedError'
+            ? 'That microphone is not connected. Plug it in or pick another one, then click Rescan.'
+            : name === 'NotReadableError'
+              ? 'The microphone is in use exclusively by another app. In Windows Sound settings → your mic → Advanced, untick “Allow applications to take exclusive control”.'
+              : 'Could not open the microphone.';
     }
     this.emit();
   }

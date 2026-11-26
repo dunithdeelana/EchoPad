@@ -4,7 +4,7 @@ import { api } from './api';
 import { engine } from './audio';
 import { useStore } from './store';
 import type { ImportResult } from './types';
-import { isVirtualCable, resolveDevice, useDevices } from './useDevices';
+import { isVirtualCable, pickMic, resolveDevice, useDevices } from './useDevices';
 import { Logo, Sidebar, StatusBar, TitleBar, Toasts, Toolbar } from './components/Chrome';
 import { SoundGrid } from './components/SoundGrid';
 import { EditDialog } from './components/EditDialog';
@@ -32,7 +32,7 @@ export default function App() {
   const resolved = useMemo(() => {
     const out = resolveDevice(devices.outputs, settings.outputDeviceId, settings.outputDeviceLabel);
     const mon = resolveDevice(devices.outputs, settings.monitorDeviceId, settings.monitorDeviceLabel);
-    const mic = resolveDevice(devices.inputs, settings.micDeviceId, settings.micDeviceLabel);
+    const mic = pickMic(devices.inputs, settings.micDeviceId, settings.micDeviceLabel);
     return { out, mon, mic };
   }, [devices.outputs, devices.inputs, settings]);
 
@@ -43,7 +43,10 @@ export default function App() {
     const { out, mon, mic } = resolved;
     if (out && out.deviceId !== settings.outputDeviceId) patch.outputDeviceId = out.deviceId;
     if (mon && mon.deviceId !== settings.monitorDeviceId) patch.monitorDeviceId = mon.deviceId;
-    if (mic && mic.deviceId !== settings.micDeviceId) patch.micDeviceId = mic.deviceId;
+    if (mic && mic.deviceId !== settings.micDeviceId) {
+      patch.micDeviceId = mic.deviceId;
+      patch.micDeviceLabel = mic.label;
+    }
     if (Object.keys(patch).length) updateSettings(patch);
   }, [resolved, ready, devices.loaded, settings, updateSettings]);
 
@@ -68,11 +71,8 @@ export default function App() {
       monitorSinkId: monId,
       monitorVolume: settings.monitorVolume,
     });
-    engine.setMic(
-      settings.micPassthrough && cableSet,
-      resolved.mic?.deviceId ?? settings.micDeviceId,
-      settings.micVolume,
-    );
+    // Only ever capture a real microphone (never the cable itself).
+    engine.setMic(settings.micPassthrough && cableSet && !!resolved.mic, resolved.mic?.deviceId ?? '', settings.micVolume);
   }, [ready, devices.loaded, resolved, settings]);
 
   // Pre-decode sounds so the first trigger is instant.

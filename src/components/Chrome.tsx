@@ -235,6 +235,7 @@ function MiniMeter({ source, label }: { source: 'mic' | 'output'; label: string 
 
 export function StatusBar() {
   const settings = useStore((s) => s.settings);
+  const setView = useStore((s) => s.setView);
   const sounds = useStore((s) => s.sounds);
   const playingNames = useSyncExternalStore(
     (cb) => engine.subscribe(cb),
@@ -254,11 +255,16 @@ export function StatusBar() {
     <footer className="statusbar">
       <div className="status-left">
         <MiniMeter source="output" label="To call" />
-        {micActive && <MiniMeter source="mic" label="Mic" />}
+        {micActive && <MiniMeter source="mic" label="Your voice" />}
         {settings.micPassthrough && !micActive && settings.outputDeviceId && (
-          <span className="status-item warn">
-            <AlertTriangle size={13} /> Mic unavailable
-          </span>
+          <button className="status-item warn link" onClick={() => setView('settings')}>
+            <AlertTriangle size={13} /> Your voice isn't reaching the call. Fix it
+          </button>
+        )}
+        {!settings.micPassthrough && settings.outputDeviceId && (
+          <button className="status-item warn link" onClick={() => setView('settings')}>
+            <AlertTriangle size={13} /> Mic passthrough is off. Friends can't hear you
+          </button>
         )}
       </div>
       <div className="status-center">

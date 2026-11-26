@@ -1410,6 +1410,15 @@ kbd {
 .status-item.warn {
   color: var(--warn);
 }
+.status-item.link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+}
+.status-item.link:hover {
+  text-decoration: underline;
+}
 .status-item.playing {
   color: var(--text-2);
   max-width: 340px;

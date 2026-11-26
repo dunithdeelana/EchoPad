@@ -7,16 +7,7 @@ export interface Devices {
   loaded: boolean;
 }
 
-const VIRTUAL_CABLE = /cable input|vb-audio|voicemeeter (aux )?input|virtual (audio|cable)|blackhole/i;
-
-export function isVirtualCable(label: string) {
-  return VIRTUAL_CABLE.test(label) && !/cable output/i.test(label);
-}
-
-/** Strip Windows' "Default - " / "Communications - " prefixes for display. */
-export function cleanLabel(label: string) {
-  return label.replace(/^(Default|Communications) - /, '');
-}
+export { cleanLabel, isVirtualCable, isVirtualInput, pickMic, realMics, resolveDevice } from './deviceLogic';
 
 let primed = false;
 
@@ -58,11 +49,4 @@ export function useDevices(): Devices {
   }, [refresh]);
 
   return { outputs, inputs, refresh, loaded };
-}
-
-/**
- * Find a device by id, falling back to label (ids can change after driver updates).
- */
-export function resolveDevice(list: MediaDeviceInfo[], id: string, label: string) {
-  return list.find((d) => d.deviceId === id) ?? (label ? list.find((d) => d.label === label) : undefined);
 }

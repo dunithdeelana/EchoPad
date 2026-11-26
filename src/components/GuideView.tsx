@@ -69,8 +69,9 @@ export function SetupSteps({ devices, compact }: { devices: Devices; compact?: b
 
       <Step n={2} done={checks.outputSet} title="Send Echopad's output to the cable">
         <p>
-          Choose <b>CABLE Input</b> as the voice chat output in Audio setup. Keep <b>Microphone passthrough</b> on so
-          your voice is mixed in too.
+          Choose <b>CABLE Input</b> as the voice chat output in Audio setup. Keep <b>Microphone passthrough</b> on and
+          pick your <b>real microphone</b> there. Echopad mixes your voice into the cable, so Discord hears you and the
+          sounds together.
         </p>
         {!checks.outputSet && cable && (
           <button
@@ -137,7 +138,9 @@ export function GuideView({ devices }: { devices: Devices }) {
             card. Pick a different combination.
           </li>
           <li>
-            <b>Your voice is missing:</b> enable Microphone passthrough and choose your real microphone.
+            <b>Friends can't hear your voice:</b> in Audio setup, make sure Microphone passthrough is on and your real
+            microphone (headset, USB mic…) is selected. Talk and the Input level bar should move. If Windows shows a
+            mic permission error, turn on “Let desktop apps access your microphone” in Windows Privacy settings.
           </li>
         </ul>
       </div>

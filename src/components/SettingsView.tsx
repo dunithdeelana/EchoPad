@@ -4,7 +4,7 @@ import { api, isElectron } from '../api';
 import { engine } from '../audio';
 import { useStore } from '../store';
 import type { Settings } from '../types';
-import { cleanLabel, isVirtualCable, resolveDevice, type Devices } from '../useDevices';
+import { cleanLabel, isVirtualCable, pickMic, realMics, resolveDevice, type Devices } from '../useDevices';
 import { HotkeyInput, Segmented, Slider, Toggle } from './controls';
 
 function DeviceSelect({
@@ -86,6 +86,12 @@ export function SettingsView({ devices }: { devices: Devices }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => update({ [k]: v } as Partial<Settings>);
   const output = resolveDevice(devices.outputs, settings.outputDeviceId, settings.outputDeviceLabel);
   const cableSelected = !!output && isVirtualCable(output.label);
+  const activeMic = pickMic(devices.inputs, settings.micDeviceId, settings.micDeviceLabel);
+  const micName = activeMic
+    ? activeMic.deviceId === 'default'
+      ? cleanLabel(activeMic.label) || 'System default microphone'
+      : cleanLabel(activeMic.label)
+    : null;
   const stopConflict = settings.stopAllHotkey
     ? sounds.find((s) => s.hotkey === settings.stopAllHotkey)
       ? 'Also assigned to a sound.'
@@ -170,8 +176,8 @@ export function SettingsView({ devices }: { devices: Devices }) {
           <div className="setting-label">Microphone</div>
           <div className="setting-control">
             <DeviceSelect
-              list={devices.inputs.filter((d) => !/cable output/i.test(d.label))}
-              id={settings.micDeviceId}
+              list={realMics(devices.inputs)}
+              id={activeMic?.deviceId ?? settings.micDeviceId}
               label={settings.micDeviceLabel}
               onChange={(id, label) => update({ micDeviceId: id, micDeviceLabel: label })}
             />
@@ -189,6 +195,24 @@ export function SettingsView({ devices }: { devices: Devices }) {
             <Meter source="mic" />
           </div>
         </div>
+        {settings.micPassthrough && settings.outputDeviceId && status.micActive && micName && (
+          <div className="callout ok">
+            <CheckCircle2 size={16} />
+            <span>
+              Your voice goes to the call from <b>{micName}</b>. Talk and the input level bar above should move.
+            </span>
+          </div>
+        )}
+        {settings.micPassthrough && devices.loaded && !activeMic && (
+          <div className="callout warn">
+            <AlertTriangle size={16} /> No real microphone found. Plug in your headset or mic, then click Rescan.
+          </div>
+        )}
+        {!settings.micPassthrough && settings.outputDeviceId && (
+          <div className="callout warn">
+            <AlertTriangle size={16} /> Passthrough is off, so your friends will hear the sounds but not your voice.
+          </div>
+        )}
         {settings.micPassthrough && !settings.outputDeviceId && (
           <div className="callout info">
             Passthrough starts once a virtual cable is selected above, so you don't hear yourself on your speakers.
