@@ -367,7 +367,8 @@ namespace Echopad
             try
             {
                 string q = "SELECT Name, PNPDeviceID, Status, ConfigManagerErrorCode, Manufacturer FROM Win32_PnPEntity " +
-                           "WHERE PNPDeviceID LIKE '%VBAUDIOVAC%' OR Name LIKE '%VB-Audio Virtual%' OR Manufacturer LIKE '%VB-Audio%'";
+                           "WHERE PNPDeviceID LIKE '%VBAUDIOVAC%' OR Name LIKE '%VB-Audio%' OR Manufacturer LIKE '%VB-Audio%' " +
+                           "OR PNPDeviceID LIKE 'ROOT\\\\MEDIA\\\\%'";
                 using (var searcher = new ManagementObjectSearcher(q))
                 {
                     searcher.Options.Timeout = TimeSpan.FromSeconds(8);

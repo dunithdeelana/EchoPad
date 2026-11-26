@@ -195,8 +195,9 @@ function createFakeWindows() {
 // System controller
 // ---------------------------------------------------------------------------
 class SystemController {
-  constructor(onReport) {
+  constructor(onReport, hooks = {}) {
     this.onReport = onReport;
+    this.hooks = hooks;
     this.supported = process.platform === 'win32' || process.env.ECHOPAD_FAKE_SYSTEM === '1';
     this.exec = process.platform === 'win32' ? runHelper : createFakeWindows();
     this.state = loadState();
@@ -265,7 +266,15 @@ class SystemController {
       const zip =
         process.platform === 'win32' ? await this.downloadPack((m) => this.emitPhase('installing', m)) : 'fake.zip';
       this.emitPhase('installing', 'Approve the Windows prompt, then click “Install Driver” in the VB-Audio window.');
-      const res = await this.exec(['run-installer', zip], 15 * 60 * 1000);
+      // Step aside so VB-Audio's window and Windows' "install this device software?" prompt can't hide behind us.
+      this.hooks.beforeInstaller?.();
+      let res;
+      try {
+        res = await this.exec(['run-installer', zip], 15 * 60 * 1000);
+      } finally {
+        this.hooks.afterInstaller?.();
+      }
+      if (res.ok) this.addLog(`VB-Audio's installer finished (exit code ${res.exitCode}).`, 'info');
       if (!res.ok) {
         const msg =
           res.error === 'cancelled'
@@ -370,7 +379,11 @@ class SystemController {
     // ---- What state is the driver in? (installed / restart pending / broken / disabled / missing)
     const bootTime = Date.now() - os.uptime() * 1000;
     const installedThisBoot = !!this.state.driverInstalledAt && this.state.driverInstalledAt > bootTime;
-    const pnpDev = (st.pnp || []).find((d) => /VBAUDIOVAC/i.test(d.id || '') || /vb-audio virtual cable/i.test(d.name || ''));
+    const pnpList = st.pnp || [];
+    const pnpDev =
+      pnpList.find((d) => /VBAUDIOVAC/i.test(d.id || '') || /vb-audio/i.test(`${d.name} ${d.manufacturer}`)) ||
+      // A root media device with an error and no driver bound has no VB-Audio name yet.
+      pnpList.find((d) => /^ROOT\\MEDIA\\/i.test(d.id || '') && Number(d.error) > 0 && !/realtek|nvidia|amd|intel/i.test(`${d.name} ${d.manufacturer}`));
     const pnpError = pnpDev ? Number(pnpDev.error) || 0 : 0;
     const endpointsActive = cableRender?.state === STATE_ACTIVE && cableCapture?.state === STATE_ACTIVE;
     const driverTraces = !!pnpDev || st.driverService === true || st.driverFile === true;

@@ -231,9 +231,17 @@ let healthTimer = null;
 let restoredOnQuit = false;
 
 function startSystem() {
-  system = new SystemController((report) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('system:report', report);
-  });
+  system = new SystemController(
+    (report) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('system:report', report);
+    },
+    {
+      beforeInstaller: () => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.minimize();
+      },
+      afterInstaller: () => showWindow(),
+    },
+  );
   const firstRun = !system.state.setupStarted;
   if (firstRun) {
     system.state.setupStarted = Date.now();
