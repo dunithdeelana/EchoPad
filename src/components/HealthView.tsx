@@ -242,7 +242,11 @@ export function SetupOverlay({ onDone }: { onDone(): void }) {
     { id: 'mic', title: 'Connect your microphone' },
     { id: 'routing', title: 'Route sounds into voice chat' },
   ];
-  const ready = overall.tone === 'ok' || overall.tone === 'warn';
+  const stepChecks = steps.map((st) => checks.find((x) => x.id === st.id));
+  const ready = !installing && stepChecks.every((c) => c?.status === 'ok');
+  const needsRestart = checks.find((c) => c.id === 'driver')?.fix === 'restart';
+  const failed = stepChecks.some((c) => c?.status === 'error');
+  void overall;
 
   return (
     <div className="modal-backdrop">
@@ -250,11 +254,23 @@ export function SetupOverlay({ onDone }: { onDone(): void }) {
         <div className="setup-head">
           <Logo size={44} />
           <div>
-            <h2>{ready ? 'You’re all set' : 'Setting up Echopad'}</h2>
+            <h2>
+              {ready
+                ? 'You’re all set'
+                : needsRestart
+                  ? 'Restart to finish setup'
+                  : failed
+                    ? 'Setup needs your help'
+                    : 'Setting up Echopad'}
+            </h2>
             <p>
               {ready
                 ? 'Join any Discord voice channel. Friends will hear your voice and your sounds.'
-                : 'This happens automatically and only once.'}
+                : needsRestart
+                  ? 'Windows needs one restart to activate the virtual microphone. Echopad finishes on its own afterwards.'
+                  : failed
+                    ? 'One step didn’t work. The reason is shown below.'
+                    : 'This happens automatically and only once.'}
             </p>
           </div>
         </div>

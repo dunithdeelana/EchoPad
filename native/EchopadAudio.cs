@@ -292,7 +292,8 @@ namespace Echopad
               .Append(",\"sessions\":[");
             bool first = true;
             try { AppendSessions(sb, en, capture, ref first); } catch { }
-            sb.Append("],\"micPrivacy\":").Append(MicPrivacyJson()).Append('}');
+            sb.Append("],\"micPrivacy\":").Append(MicPrivacyJson())
+              .Append(",\"driverService\":").Append(DriverServiceInstalled() ? "true" : "false").Append('}');
             return sb.ToString();
         }
 
@@ -328,6 +329,23 @@ namespace Echopad
             var policy = (IPolicyConfig)new PolicyConfigComObject();
             int hr = policy.SetEndpointVisibility(id, 1);
             return "{\"ok\":" + (hr == 0 ? "true" : "false") + ",\"hr\":" + hr + "}";
+        }
+
+        // VB-CABLE's kernel driver registers this service (see vbMmeCable64_win10.inf: ServiceName="VBAudioVACMME").
+        // It exists as soon as the driver is installed, even before the reboot that creates the audio devices.
+        static bool DriverServiceInstalled()
+        {
+            try
+            {
+                using (var services = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services"))
+                {
+                    if (services == null) return false;
+                    foreach (var name in services.GetSubKeyNames())
+                        if (name.StartsWith("VBAudioVAC", StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         // ------------------------------------------------------------------ microphone privacy

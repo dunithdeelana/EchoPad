@@ -18,6 +18,7 @@ const { app, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
+const os = require('node:os');
 const { execFile } = require('node:child_process');
 
 const CABLE_PAGE = 'https://vb-audio.com/Cable/';
@@ -116,6 +117,7 @@ function createFakeWindows() {
         capture: ep(sim.capture, sim.defCapture),
         sessions,
         micPrivacy: sim.privacy,
+        driverService: sim.driver || !!sim.serviceOnly,
       };
     }
     if (cmd === 'set-default') {
@@ -130,6 +132,11 @@ function createFakeWindows() {
     }
     if (cmd === 'run-installer') {
       await new Promise((r) => setTimeout(r, 1500));
+      if (process.env.ECHOPAD_FAKE_INSTALL === 'fail') return { ok: false, error: 'signature' };
+      if (process.env.ECHOPAD_FAKE_INSTALL === 'reboot') {
+        sim.serviceOnly = true; // driver installed, devices appear only after a restart
+        return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
+      }
       addCable();
       sim.driver = true;
       return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
@@ -221,12 +228,14 @@ class SystemController {
               ? 'The downloaded driver failed its signature check, so it was not installed.'
               : `Driver setup failed: ${res.error}`;
         this.addLog(msg, 'error');
+        this.state.lastInstallError = msg;
         // Don't re-open the installer on every launch if the user said no; the Health page offers it again.
         if (res.error === 'cancelled') this.state.autoInstallDeclined = true;
         saveState(this.state);
         return { ok: false, error: msg };
       }
       this.state.autoInstallDeclined = false;
+      this.state.lastInstallError = '';
       this.addLog('Installed the VB-CABLE virtual audio driver (signed by VB-Audio).');
       this.state.driverInstalledAt = Date.now();
       saveState(this.state);
@@ -241,6 +250,8 @@ class SystemController {
     } catch (err) {
       const msg = `Couldn't download the driver: ${err.message}. Check your internet connection.`;
       this.addLog(msg, 'error');
+      this.state.lastInstallError = msg;
+      saveState(this.state);
       return { ok: false, error: msg };
     } finally {
       this.installing = false;
@@ -309,8 +320,13 @@ class SystemController {
       }
     }
 
+    // Installed but Windows hasn't created the devices yet → needs a restart, not a reinstall.
+    const bootTime = Date.now() - os.uptime() * 1000;
+    const installedThisBoot = !!this.state.driverInstalledAt && this.state.driverInstalledAt > bootTime;
+    const restartNeeded = (!cableRender || !cableCapture) && (st.driverService === true || installedThisBoot);
+
     // 2. Driver missing → install automatically on first run.
-    if ((!cableRender || !cableCapture) && autoFix && firstRun && !this.installAttempted) {
+    if ((!cableRender || !cableCapture) && !restartNeeded && autoFix && firstRun && !this.installAttempted) {
       await this.installDriver();
       return this.lastReport;
     }
@@ -355,16 +371,19 @@ class SystemController {
     const checks = [];
     const driverOk = !!cableRender && !!cableCapture;
     const driverActive = driverOk && cableRender.state === STATE_ACTIVE && cableCapture.state === STATE_ACTIVE;
+    const lastError = this.state.lastInstallError;
     checks.push({
       id: 'driver',
       title: 'Virtual microphone driver',
-      status: driverActive ? 'ok' : driverOk ? 'warn' : 'error',
+      status: driverActive ? 'ok' : driverOk || restartNeeded ? 'warn' : 'error',
       detail: driverActive
         ? 'VB-CABLE is installed and working.'
-        : driverOk
-          ? 'The virtual devices exist but are not active. Restart your PC to finish the driver setup.'
-          : 'Not installed yet. Echopad installs it for you.',
-      fix: driverOk ? (driverActive ? null : 'restart') : 'install-driver',
+        : driverOk || restartNeeded
+          ? 'The driver is installed. Restart your PC to finish; Echopad starts with Windows and completes the setup by itself.'
+          : lastError
+            ? `Last attempt failed: ${lastError} Click Install now to try again.`
+            : 'Not installed yet. Click Install now: approve the Windows prompt, then click “Install Driver”.',
+      fix: driverActive ? null : driverOk || restartNeeded ? 'restart' : 'install-driver',
     });
 
     const defRen2 = st.render.find((r) => r.defaults[0]);
