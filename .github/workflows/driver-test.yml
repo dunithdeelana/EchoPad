@@ -1,8 +1,7 @@
 name: Windows end-to-end test
 
-# Runs the packaged Echopad.exe on a throwaway Windows VM: it downloads, verifies and runs VB-Audio's
-# installer itself (a UI-automation script clicks "Install Driver" like a user would), then the
-# "driver files present but device missing" case is recreated and must be detected and repaired.
+# Runs the packaged Echopad.exe on a throwaway Windows VM with VB-CABLE installed, then recreates the
+# "driver files present but device missing" case: Echopad must diagnose it and recover after a reinstall.
 on:
   push:
     branches: ['ci/**']
@@ -32,17 +31,17 @@ jobs:
           $v = release\win-unpacked\resources\bin\EchopadAudio.exe verify vb\VBCABLE_Setup_x64.exe
           Write-Host $v
           if (-not ($v | ConvertFrom-Json).ok) { throw "signature check rejects VB-Audio's installer" }
-      - name: End-to-end (fresh PC, then half-installed driver)
+      - name: Install VB-CABLE on the test VM (VB-Audio's own silent mode)
+        shell: pwsh
+        run: |
+          $p = Start-Process vb\VBCABLE_Setup_x64.exe -ArgumentList '-i','-h' -WorkingDirectory vb -PassThru -Wait
+          Write-Host "VB-Audio installer exit code: $($p.ExitCode)"
+          Start-Sleep 15
+      - name: End-to-end (installed → half-installed → repaired)
         shell: pwsh
         run: |
           npm i --no-save playwright@1.57.0
-          $clicker = Start-Job -FilePath scripts\ci\click-vbcable.ps1
           node scripts/ci/e2e-windows.cjs
-          $code = $LASTEXITCODE
-          Write-Host "`n---- clicker output ----"
-          Receive-Job $clicker
-          Stop-Job $clicker
-          exit $code
       - name: Windows driver install log (tail)
         if: always()
         shell: pwsh
