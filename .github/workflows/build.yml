@@ -23,6 +23,19 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - run: npm ci
       - run: npm run dist
+      - name: Smoke-test the Windows audio helper
+        shell: pwsh
+        run: |
+          $exe = "release/win-unpacked/resources/bin/EchopadAudio.exe"
+          if (-not (Test-Path $exe)) { throw "helper missing from package" }
+          $self = & $exe selftest | ConvertFrom-Json
+          if (-not $self.ok) { throw "helper selftest failed" }
+          $status = & $exe status
+          Write-Host "status: $status"
+          $parsed = $status | ConvertFrom-Json
+          if ($null -eq $parsed.ok) { throw "helper status returned invalid JSON" }
+          $verify = & $exe verify "$env:WINDIR\System32\notepad.exe"
+          Write-Host "verify notepad: $verify"
       - uses: actions/upload-artifact@v4
         with:
           name: Echopad-Setup

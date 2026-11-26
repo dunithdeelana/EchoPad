@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from './api';
 import { engine } from './audio';
-import type { Library, Settings, Sound } from './types';
+import type { HealthReport, Library, Settings, Sound } from './types';
 
 export const PALETTE = [
   '#7c5cff',
@@ -25,7 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   monitorDeviceLabel: '',
   monitorVolume: 0.7,
   micPassthrough: true,
-  micDeviceId: 'default',
+  micDeviceId: '',
   micDeviceLabel: '',
   micVolume: 1,
   retrigger: 'restart',
@@ -35,7 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
 };
 
-export type View = 'all' | 'favorites' | 'settings' | 'guide';
+export type View = 'all' | 'favorites' | 'settings' | 'health';
 export type SortMode = 'manual' | 'name' | 'recent' | 'plays';
 
 export interface Toast {
@@ -55,8 +55,10 @@ interface State {
   recordingHotkey: boolean;
   toasts: Toast[];
   editingId: string | null;
+  health: HealthReport | null;
 
   init(): Promise<void>;
+  setHealth(h: HealthReport): void;
   setView(v: View): void;
   setQuery(q: string): void;
   setSort(s: SortMode): void;
@@ -97,6 +99,8 @@ export const useStore = create<State>((set, get) => {
     recordingHotkey: false,
     toasts: [],
     editingId: null,
+    health: null,
+    setHealth: (health) => set({ health }),
 
     async init() {
       const lib = await api.loadLibrary();

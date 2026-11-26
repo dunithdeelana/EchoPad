@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AlertTriangle,
   ArrowUpDown,
-  BookOpen,
   CheckCircle2,
   Copy,
   Info,
@@ -10,6 +9,7 @@ import {
   Minus,
   Plus,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
   Square,
   Star,
@@ -19,8 +19,9 @@ import {
 import { api, isElectron } from '../api';
 import { engine } from '../audio';
 import { useStore, type SortMode, type View } from '../store';
-import { cleanLabel, isVirtualCable, resolveDevice, type Devices } from '../useDevices';
+import { type Devices } from '../useDevices';
 import { Kbd } from './controls';
+import { overallStatus, useAllChecks } from './HealthView';
 
 export function Logo({ size = 22 }: { size?: number }) {
   return (
@@ -76,9 +77,10 @@ export function Sidebar({ devices }: { devices: Devices }) {
   const setView = useStore((s) => s.setView);
   const count = useStore((s) => s.sounds.length);
   const favs = useStore((s) => s.sounds.filter((x) => x.favorite).length);
-  const settings = useStore((s) => s.settings);
-  const output = resolveDevice(devices.outputs, settings.outputDeviceId, settings.outputDeviceLabel);
-  const live = !!output && isVirtualCable(output.label);
+  const health = useStore((s) => s.health);
+  const checks = useAllChecks();
+  const overall = overallStatus(health, checks);
+  void devices;
 
   const nav = (v: View, icon: React.ReactNode, label: string, badge?: number) => (
     <button className={`nav-item${view === v ? ' active' : ''}`} onClick={() => setView(v)}>
@@ -98,16 +100,20 @@ export function Sidebar({ devices }: { devices: Devices }) {
       <div className="nav-group">
         <div className="nav-heading">Setup</div>
         {nav('settings', <SlidersHorizontal size={17} />, 'Audio setup')}
-        {nav('guide', <BookOpen size={17} />, 'Discord guide')}
+        {nav('health', <ShieldCheck size={17} />, 'Health')}
       </div>
       <div className="sidebar-spacer" />
-      <button className={`route-card${live ? ' live' : ''}`} onClick={() => setView(live ? 'settings' : 'guide')}>
+      <button className={`route-card ${overall.tone}`} onClick={() => setView('health')}>
         <div className="route-title">
           <span className="route-dot" />
-          {live ? 'Live in voice chat' : 'Not connected to Discord'}
+          {overall.text}
         </div>
         <div className="route-sub">
-          {live ? cleanLabel(output!.label) : 'Finish the 2-minute setup so friends can hear your sounds.'}
+          {overall.tone === 'ok'
+            ? 'Join a voice channel and press a shortcut.'
+            : overall.tone === 'busy'
+              ? health?.phaseMessage || 'Echopad is configuring your PC.'
+              : 'Click to see what Echopad needs.'}
         </div>
       </button>
     </aside>
@@ -150,7 +156,7 @@ export function Toolbar({ onAdd }: { onAdd(): void }) {
     all: ['All sounds', 'Click a pad or press its shortcut to play it in your call.'],
     favorites: ['Favorites', 'Your starred sounds.'],
     settings: ['Audio setup', 'Choose where sounds go and how your mic is mixed in.'],
-    guide: ['Discord guide', 'Get your friends hearing your sounds in four steps.'],
+    health: ['Health', 'Echopad sets up Windows and Discord audio for you and keeps it working.'],
   };
   const [title, sub] = titles[view];
   const library = view === 'all' || view === 'favorites';

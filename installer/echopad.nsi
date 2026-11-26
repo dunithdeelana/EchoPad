@@ -118,6 +118,10 @@ SectionEnd
 ; ---------------------------------------------------------------- uninstall
 Section "Uninstall"
   SetShellVarContext current
+  ; Give the user's real microphone back to Windows before removing Echopad.
+  IfFileExists "$INSTDIR\${APP_EXE}" 0 +3
+    ExecWait '"$INSTDIR\${APP_EXE}" --restore-audio'
+    Sleep 2500
   !insertmacro CloseRunningApp
 
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"

@@ -41,10 +41,20 @@ export function realMics<T extends DeviceLike>(inputs: T[]): T[] {
  * "CABLE Output" the Windows default recording device, and capturing it would loop the cable
  * back into itself instead of carrying the user's voice.
  */
-export function pickMic<T extends DeviceLike>(inputs: T[], id: string, label: string): T | undefined {
-  const chosen = resolveDevice(inputs, id, label);
-  if (chosen && !isVirtualInput(chosen.label)) return chosen;
+export function pickMic<T extends DeviceLike>(
+  inputs: T[],
+  id: string,
+  label: string,
+  preferredName = '',
+): T | undefined {
+  const explicit = !!id && id !== 'default';
+  if (explicit) {
+    const chosen = resolveDevice(inputs, id, label);
+    if (chosen && !isVirtualInput(chosen.label)) return chosen;
+  }
   const real = realMics(inputs);
-  // Prefer a specific device over the "default" alias, since the alias may later flip to the cable.
-  return real.find((d) => d.deviceId !== 'default') ?? real[0];
+  // Automatic: the mic Windows used before Echopad switched the default to its virtual microphone.
+  const preferred = preferredName ? real.find((d) => d.deviceId !== 'default' && d.label === preferredName) : undefined;
+  // Prefer a specific device over the "default" alias, since the alias may point at the cable.
+  return preferred ?? real.find((d) => d.deviceId !== 'default') ?? real[0];
 }

@@ -54,6 +54,35 @@ export interface ImportResult {
   skipped: string[];
 }
 
+export type CheckStatus = 'ok' | 'warn' | 'error' | 'info' | 'pending';
+export type FixAction =
+  | 'install-driver'
+  | 'restart'
+  | 'fix-privacy'
+  | 'open-privacy'
+  | 'open-discord'
+  | 'open-sound-settings'
+  | 'retry';
+
+export interface HealthCheck {
+  id: string;
+  title: string;
+  status: CheckStatus;
+  detail: string;
+  fix?: FixAction | null;
+}
+
+export interface HealthReport {
+  supported: boolean;
+  phase: 'installing' | 'attention' | 'ready' | 'error';
+  phaseMessage?: string;
+  checks: HealthCheck[];
+  log: { at: number; text: string; kind: 'fix' | 'error' | 'info' }[];
+  realMicName?: string;
+  cableRenderName?: string;
+  checkedAt?: number;
+}
+
 export interface EchopadApi {
   loadLibrary(): Promise<Library | null>;
   saveLibrary(data: Library): Promise<boolean>;
@@ -72,6 +101,10 @@ export interface EchopadApi {
   setLoginItem(enabled: boolean): Promise<boolean>;
   appInfo(): Promise<{ version: string; platform: string; dataDir: string }>;
   openDataDir(): Promise<unknown>;
+  systemCheck(): Promise<HealthReport | null>;
+  systemLast(): Promise<HealthReport | null>;
+  systemAction(action: FixAction): Promise<unknown>;
+  onSystemReport(cb: (r: HealthReport) => void): () => void;
   minimize(): void;
   toggleMaximize(): void;
   close(): void;

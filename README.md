@@ -9,11 +9,24 @@ A soundboard for Windows that plays sounds straight into **Discord** (or any voi
 - Volume and colour per sound, favourites, search, sorting, drag-to-reorder
 - Live level meters, first-run setup guide, system tray, launch at startup
 
-## How it works
+## How it works — set up automatically
 
-Discord can only listen to a microphone. Echopad plays sounds into the free
-[VB-CABLE](https://vb-audio.com/Cable/) virtual audio device and mixes your real microphone into it.
-In Discord you pick **CABLE Output** as your input device. The in-app guide walks through it.
+Discord can only listen to a microphone, so Echopad uses a virtual microphone. On first launch Echopad:
+
+1. Downloads [VB-CABLE](https://vb-cable.com) (donationware by VB-Audio) from vb-audio.com, verifies it is
+   signed by VB-Audio, and opens VB-Audio's own installer. You approve the Windows prompt and click
+   **Install Driver**. VB-CABLE is not bundled or modified; VB-Audio's license does not allow repackaging it.
+2. Makes the virtual microphone the Windows default recording device and mixes your real microphone into it,
+   so Discord (Input Device = **Default**) hears your voice and your sounds. No Discord settings needed.
+3. Keeps your speakers as the default playback device, and allows desktop apps to use the microphone.
+
+A health monitor re-checks every 30 seconds and on every device change, and repairs what it can:
+disabled devices, the cable taking over your speakers, mic permission, the default microphone.
+It also detects which microphone Discord is actually recording from. When you quit Echopad
+(or uninstall it) your real microphone becomes the Windows default again.
+
+Windows changes go through `EchopadAudio.exe` (`native/EchopadAudio.cs`), a small C# helper that uses the
+Windows Core Audio APIs.
 
 ## Install
 
@@ -47,4 +60,6 @@ Every push to `main` also builds the installer on GitHub Actions and publishes i
 | `src/audio.ts` | Audio engine: cable output, monitor output, mic passthrough, meters |
 | `src/store.ts` | App state and persistence |
 | `src/components/` | UI |
+| `electron/system.js` | Automatic setup, health checks and self-repair |
+| `native/EchopadAudio.cs` | Windows audio helper (devices, defaults, sessions, mic privacy) |
 | `installer/echopad.nsi` | NSIS installer script |

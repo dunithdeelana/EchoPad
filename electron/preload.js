@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('echopad', {
   appInfo: () => ipcRenderer.invoke('app:info'),
   openDataDir: () => ipcRenderer.invoke('app:open-data-dir'),
 
+  systemCheck: () => ipcRenderer.invoke('system:check'),
+  systemLast: () => ipcRenderer.invoke('system:last'),
+  systemAction: (action) => ipcRenderer.invoke('system:action', action),
+  onSystemReport: (cb) => on('system:report', cb),
+
   minimize: () => ipcRenderer.send('window:minimize'),
   toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
   close: () => ipcRenderer.send('window:close'),

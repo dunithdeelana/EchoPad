@@ -16,6 +16,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
+const { execFile } = require('node:child_process');
+const { SystemController } = require('./system');
 
 const APP_NAME = 'Echopad';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm'];
@@ -27,7 +29,9 @@ if (process.platform === 'win32') app.setAppUserModelId('com.echopad.app');
 // ---------------------------------------------------------------------------
 // Single instance
 // ---------------------------------------------------------------------------
+const RESTORE_FLAG = '--restore-audio';
 if (!app.requestSingleInstanceLock()) {
+  // A running instance receives our argv (incl. --restore-audio from the uninstaller) via 'second-instance'.
   app.quit();
   process.exit(0);
 }
@@ -219,6 +223,40 @@ function createTray() {
 }
 
 // ---------------------------------------------------------------------------
+// Automatic system setup / self-healing
+// ---------------------------------------------------------------------------
+let system = null;
+let healthTimer = null;
+let restoredOnQuit = false;
+
+function startSystem() {
+  system = new SystemController((report) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('system:report', report);
+  });
+  const firstRun = !system.state.setupStarted;
+  if (firstRun) {
+    system.state.setupStarted = Date.now();
+    // Be ready whenever the PC starts: launch minimised to the tray at login.
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] });
+  }
+  const autoInstall = !system.state.autoInstallDeclined;
+  // Give the window a moment to appear so the user sees what's happening.
+  setTimeout(() => system.check({ autoFix: true, firstRun: autoInstall }), 1200);
+  healthTimer = setInterval(() => system.check({ autoFix: true }), 30_000);
+}
+
+async function restoreAudioAndQuit() {
+  try {
+    if (!system) system = new SystemController(() => {});
+    await Promise.race([system.restore(), new Promise((r) => setTimeout(r, 6000))]);
+  } finally {
+    restoredOnQuit = true;
+    isQuitting = true;
+    app.quit();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Global hotkeys
 // ---------------------------------------------------------------------------
 let hotkeyMap = {}; // accelerator -> action string ("sound:<id>" | "stop-all")
@@ -336,6 +374,29 @@ function registerIpc() {
   }));
   ipcMain.handle('app:open-data-dir', async () => shell.openPath(userDir()));
 
+  ipcMain.handle('system:check', async () => system?.check({ autoFix: true }));
+  ipcMain.handle('system:last', async () => system?.lastReport ?? null);
+  ipcMain.handle('system:action', async (_e, action) => {
+    if (!system) return null;
+    switch (action) {
+      case 'install-driver':
+        return system.installDriver();
+      case 'fix-privacy':
+        return system.fixPrivacy();
+      case 'open-privacy':
+        return shell.openExternal('ms-settings:privacy-microphone');
+      case 'open-sound-settings':
+        return shell.openExternal('ms-settings:sound');
+      case 'open-discord':
+        return shell.openExternal('discord://-/settings/voice').catch(() => null);
+      case 'restart':
+        if (process.platform === 'win32') execFile('shutdown', ['/r', '/t', '5', '/c', 'Restarting to finish Echopad setup'], { windowsHide: true });
+        return true;
+      default:
+        return system.check({ autoFix: true });
+    }
+  });
+
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:toggle-maximize', () => {
     if (!mainWindow) return;
@@ -349,9 +410,16 @@ function registerIpc() {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
-app.on('second-instance', showWindow);
+app.on('second-instance', (_e, argv) => {
+  if (argv.includes(RESTORE_FLAG)) restoreAudioAndQuit();
+  else showWindow();
+});
 
 app.whenReady().then(() => {
+  if (process.argv.includes(RESTORE_FLAG)) {
+    restoreAudioAndQuit();
+    return;
+  }
   ensureDirs();
   const lib = readJson(libraryFile(), null);
   closeToTray = lib?.settings?.closeToTray !== false;
@@ -383,11 +451,18 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   createTray();
+  startSystem();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
   isQuitting = true;
   persistWindowState();
+  // Give the user's real microphone back to Windows before exiting.
+  if (!restoredOnQuit && system) {
+    e.preventDefault();
+    clearInterval(healthTimer);
+    restoreAudioAndQuit();
+  }
 });
 
 app.on('will-quit', () => {

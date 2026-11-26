@@ -5,12 +5,11 @@ import { engine } from './audio';
 import { useStore } from './store';
 import type { ImportResult } from './types';
 import { isVirtualCable, pickMic, resolveDevice, useDevices } from './useDevices';
-import { Logo, Sidebar, StatusBar, TitleBar, Toasts, Toolbar } from './components/Chrome';
+import { Sidebar, StatusBar, TitleBar, Toasts, Toolbar } from './components/Chrome';
 import { SoundGrid } from './components/SoundGrid';
 import { EditDialog } from './components/EditDialog';
 import { SettingsView } from './components/SettingsView';
-import { GuideView, SetupSteps } from './components/GuideView';
-import { Modal } from './components/controls';
+import { HealthView, SetupOverlay } from './components/HealthView';
 
 export default function App() {
   const ready = useStore((s) => s.ready);
@@ -19,7 +18,8 @@ export default function App() {
   const settings = useStore((s) => s.settings);
   const editingId = useStore((s) => s.editingId);
   const recording = useStore((s) => s.recordingHotkey);
-  const { init, addImported, toast, updateSettings, setFailedHotkeys } = useStore.getState();
+  const health = useStore((s) => s.health);
+  const { init, addImported, toast, updateSettings, setFailedHotkeys, setHealth } = useStore.getState();
   const devices = useDevices();
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -28,13 +28,32 @@ export default function App() {
     init();
   }, [init]);
 
+  // ------------------------------------------------------------------ automatic system setup
+  useEffect(() => {
+    api.systemLast().then((r) => r && setHealth(r));
+    return api.onSystemReport(setHealth);
+  }, [setHealth]);
+
+  // Re-check (and self-repair) whenever audio devices change.
+  const deviceSignature = devices.outputs.map((d) => d.label).join('|') + '#' + devices.inputs.map((d) => d.label).join('|');
+  const firstSignature = useRef('');
+  useEffect(() => {
+    if (!devices.loaded) return;
+    if (!firstSignature.current) {
+      firstSignature.current = deviceSignature;
+      return;
+    }
+    const t = setTimeout(() => api.systemCheck(), 1500);
+    return () => clearTimeout(t);
+  }, [deviceSignature, devices.loaded]);
+
   // ------------------------------------------------------------------ device resolution
   const resolved = useMemo(() => {
     const out = resolveDevice(devices.outputs, settings.outputDeviceId, settings.outputDeviceLabel);
     const mon = resolveDevice(devices.outputs, settings.monitorDeviceId, settings.monitorDeviceLabel);
-    const mic = pickMic(devices.inputs, settings.micDeviceId, settings.micDeviceLabel);
+    const mic = pickMic(devices.inputs, settings.micDeviceId, settings.micDeviceLabel, health?.realMicName);
     return { out, mon, mic };
-  }, [devices.outputs, devices.inputs, settings]);
+  }, [devices.outputs, devices.inputs, settings, health?.realMicName]);
 
   // Keep stored ids fresh when a device was re-matched by label.
   useEffect(() => {
@@ -43,19 +62,27 @@ export default function App() {
     const { out, mon, mic } = resolved;
     if (out && out.deviceId !== settings.outputDeviceId) patch.outputDeviceId = out.deviceId;
     if (mon && mon.deviceId !== settings.monitorDeviceId) patch.monitorDeviceId = mon.deviceId;
-    if (mic && mic.deviceId !== settings.micDeviceId) {
+    // Only refresh an explicit mic choice that was re-matched by name; automatic mode stays automatic.
+    const explicitMic = !!settings.micDeviceId && settings.micDeviceId !== 'default' && !!settings.micDeviceLabel;
+    if (explicitMic && mic && mic.label === settings.micDeviceLabel && mic.deviceId !== settings.micDeviceId) {
       patch.micDeviceId = mic.deviceId;
-      patch.micDeviceLabel = mic.label;
     }
     if (Object.keys(patch).length) updateSettings(patch);
   }, [resolved, ready, devices.loaded, settings, updateSettings]);
 
-  // First run: auto-pick a virtual cable if one is installed.
+  // Always route to the virtual cable automatically when it's available and nothing valid is selected.
   useEffect(() => {
-    if (!ready || !devices.loaded || settings.onboarded || settings.outputDeviceId) return;
-    const cable = devices.outputs.find((d) => isVirtualCable(d.label));
+    if (!ready || !devices.loaded || resolved.out) return;
+    const cable =
+      devices.outputs.find((d) => d.deviceId !== 'default' && health?.cableRenderName && d.label === health.cableRenderName) ??
+      devices.outputs.find((d) => d.deviceId !== 'default' && isVirtualCable(d.label));
     if (cable) updateSettings({ outputDeviceId: cable.deviceId, outputDeviceLabel: cable.label });
-  }, [ready, devices.loaded, devices.outputs, settings.onboarded, settings.outputDeviceId, updateSettings]);
+  }, [ready, devices.loaded, devices.outputs, resolved.out, health?.cableRenderName, updateSettings]);
+
+  // Outside Windows (preview builds) there is nothing to set up.
+  useEffect(() => {
+    if (ready && health && !health.supported && !settings.onboarded) updateSettings({ onboarded: true });
+  }, [ready, health, settings.onboarded, updateSettings]);
 
   // ------------------------------------------------------------------ audio routing
   useEffect(() => {
@@ -186,7 +213,7 @@ export default function App() {
           <div className="content">
             {(view === 'all' || view === 'favorites') && <SoundGrid onAdd={pick} />}
             {view === 'settings' && <SettingsView devices={devices} />}
-            {view === 'guide' && <GuideView devices={devices} />}
+            {view === 'health' && <HealthView />}
           </div>
         </main>
       </div>
@@ -202,31 +229,7 @@ export default function App() {
         </div>
       )}
       {editingId && <EditDialog key={editingId} id={editingId} />}
-      {!settings.onboarded && (
-        <Modal
-          width={620}
-          title={
-            <span className="welcome-title">
-              <Logo size={26} /> Welcome to Echopad
-            </span>
-          }
-          onClose={() => updateSettings({ onboarded: true })}
-          footer={
-            <>
-              <span className="footer-note">You can reopen this anytime from Discord guide.</span>
-              <div className="spacer" />
-              <button className="btn primary" onClick={() => updateSettings({ onboarded: true })}>
-                Get started
-              </button>
-            </>
-          }
-        >
-          <p className="lead">
-            Play sounds straight into Discord with global shortcuts. Here's the one-time setup:
-          </p>
-          <SetupSteps devices={devices} compact />
-        </Modal>
-      )}
+      {!settings.onboarded && health?.supported && <SetupOverlay onDone={() => updateSettings({ onboarded: true })} />}
       <Toasts />
     </div>
   );

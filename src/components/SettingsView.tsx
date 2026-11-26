@@ -86,7 +86,8 @@ export function SettingsView({ devices }: { devices: Devices }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => update({ [k]: v } as Partial<Settings>);
   const output = resolveDevice(devices.outputs, settings.outputDeviceId, settings.outputDeviceLabel);
   const cableSelected = !!output && isVirtualCable(output.label);
-  const activeMic = pickMic(devices.inputs, settings.micDeviceId, settings.micDeviceLabel);
+  const health = useStore((s) => s.health);
+  const activeMic = pickMic(devices.inputs, settings.micDeviceId, settings.micDeviceLabel, health?.realMicName);
   const micName = activeMic
     ? activeMic.deviceId === 'default'
       ? cleanLabel(activeMic.label) || 'System default microphone'
@@ -109,7 +110,7 @@ export function SettingsView({ devices }: { devices: Devices }) {
           </div>
           <div>
             <h3>Voice chat output</h3>
-            <p>The device Discord uses as its microphone. Pick your virtual cable here (e.g. “CABLE Input”).</p>
+            <p>Echopad picks its virtual microphone automatically. Change this only if you know you need to.</p>
           </div>
           <button className="btn ghost sm" onClick={() => devices.refresh()} title="Rescan audio devices">
             <RefreshCw size={14} /> Rescan
@@ -177,9 +178,10 @@ export function SettingsView({ devices }: { devices: Devices }) {
           <div className="setting-control">
             <DeviceSelect
               list={realMics(devices.inputs)}
-              id={activeMic?.deviceId ?? settings.micDeviceId}
+              id={settings.micDeviceId && settings.micDeviceId !== 'default' ? (activeMic?.deviceId ?? settings.micDeviceId) : ''}
               label={settings.micDeviceLabel}
-              onChange={(id, label) => update({ micDeviceId: id, micDeviceLabel: label })}
+              placeholder={`Automatic${activeMic ? ` (${cleanLabel(activeMic.label)})` : ''}`}
+              onChange={(id, label) => update({ micDeviceId: id, micDeviceLabel: id ? label : '' })}
             />
           </div>
         </div>
