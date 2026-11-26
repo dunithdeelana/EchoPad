@@ -2,6 +2,7 @@
 
 const {
   app,
+  clipboard,
   BrowserWindow,
   ipcMain,
   globalShortcut,
@@ -375,12 +376,22 @@ function registerIpc() {
   ipcMain.handle('app:open-data-dir', async () => shell.openPath(userDir()));
 
   ipcMain.handle('system:check', async () => system?.check({ autoFix: true }));
+  ipcMain.handle('system:copy-diagnostics', async () => {
+    if (!system) return '';
+    await system.check({ autoFix: false });
+    const text = system.diagnostics();
+    clipboard.writeText(text);
+    return text;
+  });
   ipcMain.handle('system:last', async () => system?.lastReport ?? null);
   ipcMain.handle('system:action', async (_e, action) => {
     if (!system) return null;
     switch (action) {
       case 'install-driver':
+      case 'repair-driver':
         return system.installDriver();
+      case 'enable-device':
+        return system.enableDevice();
       case 'fix-privacy':
         return system.fixPrivacy();
       case 'open-privacy':

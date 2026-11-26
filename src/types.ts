@@ -57,6 +57,8 @@ export interface ImportResult {
 export type CheckStatus = 'ok' | 'warn' | 'error' | 'info' | 'pending';
 export type FixAction =
   | 'install-driver'
+  | 'repair-driver'
+  | 'enable-device'
   | 'restart'
   | 'fix-privacy'
   | 'open-privacy'
@@ -105,6 +107,7 @@ export interface EchopadApi {
   systemLast(): Promise<HealthReport | null>;
   systemAction(action: FixAction): Promise<unknown>;
   onSystemReport(cb: (r: HealthReport) => void): () => void;
+  copyDiagnostics(): Promise<string>;
   minimize(): void;
   toggleMaximize(): void;
   close(): void;

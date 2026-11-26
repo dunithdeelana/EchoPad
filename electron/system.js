@@ -30,8 +30,32 @@ const KNOWN_PACKS = [
 const STATE_ACTIVE = 1;
 const STATE_DISABLED = 2;
 
-const isCableRender = (n) => /cable input/i.test(n) && /vb-audio/i.test(n);
-const isCableCapture = (n) => /cable output/i.test(n) && /vb-audio/i.test(n);
+const STATE_NOTPRESENT = 4;
+const isCableRender = (n) => /\bcable in(put)?\b/i.test(n) || (/vb-audio virtual cable/i.test(n) && !/cable output/i.test(n));
+const isCableCapture = (n) => /\bcable output\b/i.test(n) || (/vb-audio virtual cable/i.test(n) && !/cable in/i.test(n));
+/** Best matching cable endpoint: active first, then the standard "CABLE Input/Output" over e.g. "CABLE In 16 Ch". */
+function findCable(list, match, preferred) {
+  return list
+    .filter((e) => match(e.name))
+    .sort((a, b) => (b.state === STATE_ACTIVE) - (a.state === STATE_ACTIVE) || preferred.test(b.name) - preferred.test(a.name))[0];
+}
+const PNP_ERRORS = {
+  1: 'the device is not configured correctly',
+  10: 'the device cannot start',
+  18: 'the driver needs to be reinstalled',
+  19: 'its configuration in the registry is damaged',
+  21: 'Windows is removing the device',
+  22: 'the device is disabled in Device Manager',
+  24: 'the device is not present or not working',
+  28: 'its drivers are not installed',
+  31: 'Windows cannot load its driver',
+  37: 'Windows cannot initialize its driver',
+  39: 'its driver is missing or damaged',
+  43: 'Windows stopped the device after it reported problems',
+  45: 'the device is not connected',
+  48: 'Windows blocked its driver because of known problems',
+  52: 'Windows could not verify its driver signature',
+};
 const isVirtual = (n) => /vb-audio|voicemeeter|virtual|cable (input|output)|stereo mix/i.test(n);
 const isDiscord = (p) => /^discord(ptb|canary|development)?$/i.test(p || '');
 
@@ -92,6 +116,10 @@ function createFakeWindows() {
     privacy: { user: 'Allow', desktop: process.env.ECHOPAD_FAKE_PRIVACY || 'Allow', machine: 'Allow' },
     discordOn: process.env.ECHOPAD_FAKE_DISCORD || '', // '' | 'default' | 'mic'
   };
+  // ECHOPAD_FAKE_BROKEN=52 → driver installed but the device fails with that Device Manager code; 'incomplete' → files only
+  const broken = process.env.ECHOPAD_FAKE_BROKEN;
+  if (broken === 'incomplete') sim.serviceOnly = true;
+  else if (broken) sim.pnpError = Number(broken);
   const addCable = () => {
     sim.render.push({ id: 'r-cable', name: 'CABLE Input (VB-Audio Virtual Cable)', state: 1 });
     sim.capture.push({ id: 'c-cable', name: 'CABLE Output (VB-Audio Virtual Cable)', state: 1 });
@@ -118,6 +146,11 @@ function createFakeWindows() {
         sessions,
         micPrivacy: sim.privacy,
         driverService: sim.driver || !!sim.serviceOnly,
+        driverFile: sim.driver || !!sim.serviceOnly,
+        pnp: sim.pnpError !== undefined
+          ? [{ name: 'VB-Audio Virtual Cable', id: 'ROOT\\MEDIA\\0001', status: sim.pnpError ? 'Error' : 'OK', error: sim.pnpError }]
+          : [],
+        os: 'Microsoft Windows NT 10.0.26100.0 (simulated)',
       };
     }
     if (cmd === 'set-default') {
@@ -126,6 +159,11 @@ function createFakeWindows() {
       return { ok: true };
     }
     if (cmd === 'enable') return { ok: true };
+    if (cmd === 'enable-pnp') {
+      sim.pnpError = 0;
+      addCable();
+      return { ok: true, exitCode: 0 };
+    }
     if (cmd === 'fix-mic-privacy') {
       sim.privacy = { ...sim.privacy, user: 'Allow', desktop: 'Allow' };
       return { ok: true };
@@ -133,6 +171,14 @@ function createFakeWindows() {
     if (cmd === 'run-installer') {
       await new Promise((r) => setTimeout(r, 1500));
       if (process.env.ECHOPAD_FAKE_INSTALL === 'fail') return { ok: false, error: 'signature' };
+      if (sim.pnpError || sim.serviceOnly) {
+        // Reinstall repairs the broken device.
+        sim.pnpError = undefined;
+        sim.serviceOnly = false;
+        addCable();
+        sim.driver = true;
+        return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
+      }
       if (process.env.ECHOPAD_FAKE_INSTALL === 'reboot') {
         sim.serviceOnly = true; // driver installed, devices appear only after a restart
         return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
@@ -243,7 +289,7 @@ class SystemController {
       this.emitPhase('installing', 'Waiting for Windows to register the virtual microphone…');
       for (let i = 0; i < 20; i++) {
         const st = await this.exec(['status']);
-        if (st.ok && st.capture.some((c) => isCableCapture(c.name))) break;
+        if (st.ok && st.capture.some((c) => isCableCapture(c.name) && c.state === STATE_ACTIVE)) break;
         await new Promise((r) => setTimeout(r, 1500));
       }
       return { ok: true };
@@ -307,8 +353,9 @@ class SystemController {
     if (defCap && !isVirtual(defCap.name)) this.state.realMic = { id: defCap.id, name: defCap.name };
     if (defRen && !isVirtual(defRen.name)) this.state.realSpeaker = { id: defRen.id, name: defRen.name };
 
-    let cableRender = st.render.find((r) => isCableRender(r.name));
-    let cableCapture = st.capture.find((c) => isCableCapture(c.name));
+    this.lastRaw = st;
+    let cableRender = findCable(st.render, isCableRender, /cable input/i);
+    let cableCapture = findCable(st.capture, isCableCapture, /cable output/i);
 
     // 1. Disabled virtual devices → re-enable.
     if (autoFix) {
@@ -320,13 +367,47 @@ class SystemController {
       }
     }
 
-    // Installed but Windows hasn't created the devices yet → needs a restart, not a reinstall.
+    // ---- What state is the driver in? (installed / restart pending / broken / disabled / missing)
     const bootTime = Date.now() - os.uptime() * 1000;
     const installedThisBoot = !!this.state.driverInstalledAt && this.state.driverInstalledAt > bootTime;
-    const restartNeeded = (!cableRender || !cableCapture) && (st.driverService === true || installedThisBoot);
+    const pnpDev = (st.pnp || []).find((d) => /VBAUDIOVAC/i.test(d.id || '') || /vb-audio virtual cable/i.test(d.name || ''));
+    const pnpError = pnpDev ? Number(pnpDev.error) || 0 : 0;
+    const endpointsActive = cableRender?.state === STATE_ACTIVE && cableCapture?.state === STATE_ACTIVE;
+    const driverTraces = !!pnpDev || st.driverService === true || st.driverFile === true;
+    let driverState = 'missing';
+    if (endpointsActive) driverState = 'ok';
+    else if (pnpError === 22) driverState = 'disabled';
+    else if (pnpError) driverState = 'broken';
+    else if (installedThisBoot) driverState = 'restart';
+    else if (driverTraces || cableRender || cableCapture) driverState = 'incomplete';
+
+    // Disabled in Device Manager → turn it back on (Windows asks for approval once).
+    if (autoFix && driverState === 'disabled' && !this.enableAttempted) {
+      this.enableAttempted = true;
+      const r = await this.exec(['enable-pnp', pnpDev.id], 120000);
+      if (r.ok) {
+        this.addLog('Turned the VB-CABLE device back on (it was disabled in Device Manager).');
+        return this._check({ autoFix, firstRun: false });
+      }
+    }
+
+    // Broken or half-installed driver → run VB-Audio's installer again once (it repairs in place).
+    const repairDue = !this.state.autoRepairAt || Date.now() - this.state.autoRepairAt > 24 * 3600 * 1000;
+    if (autoFix && (driverState === 'broken' || driverState === 'incomplete') && repairDue && !this.installAttempted) {
+      this.state.autoRepairAt = Date.now();
+      saveState(this.state);
+      this.addLog(
+        driverState === 'broken'
+          ? `VB-CABLE is installed but ${PNP_ERRORS[pnpError] || `reports error ${pnpError}`}. Reinstalling it.`
+          : 'VB-CABLE is only partly installed. Reinstalling it.',
+        'info',
+      );
+      await this.installDriver();
+      return this.lastReport;
+    }
 
     // 2. Driver missing → install automatically on first run.
-    if ((!cableRender || !cableCapture) && !restartNeeded && autoFix && firstRun && !this.installAttempted) {
+    if (driverState === 'missing' && autoFix && firstRun && !this.installAttempted) {
       await this.installDriver();
       return this.lastReport;
     }
@@ -362,29 +443,43 @@ class SystemController {
     if (fixes.length) {
       fixes.forEach((f) => this.addLog(f));
       st = (await this.exec(['status'])) || st;
-      cableRender = st.render.find((r) => isCableRender(r.name));
-      cableCapture = st.capture.find((c) => isCableCapture(c.name));
+      this.lastRaw = st;
+      cableRender = findCable(st.render, isCableRender, /cable input/i);
+      cableCapture = findCable(st.capture, isCableCapture, /cable output/i);
     }
     saveState(this.state);
 
     // ---------------------------------------------------------------- build report
     const checks = [];
-    const driverOk = !!cableRender && !!cableCapture;
-    const driverActive = driverOk && cableRender.state === STATE_ACTIVE && cableCapture.state === STATE_ACTIVE;
     const lastError = this.state.lastInstallError;
-    checks.push({
-      id: 'driver',
-      title: 'Virtual microphone driver',
-      status: driverActive ? 'ok' : driverOk || restartNeeded ? 'warn' : 'error',
-      detail: driverActive
-        ? 'VB-CABLE is installed and working.'
-        : driverOk || restartNeeded
-          ? 'The driver is installed. Restart your PC to finish; Echopad starts with Windows and completes the setup by itself.'
-          : lastError
-            ? `Last attempt failed: ${lastError} Click Install now to try again.`
-            : 'Not installed yet. Click Install now: approve the Windows prompt, then click “Install Driver”.',
-      fix: driverActive ? null : driverOk || restartNeeded ? 'restart' : 'install-driver',
-    });
+    const driverActive = endpointsActive;
+    const DRIVER = {
+      ok: ['ok', 'VB-CABLE is installed and working.', null],
+      restart: [
+        'warn',
+        'The driver was just installed. Restart your PC to finish; Echopad starts with Windows and completes the setup by itself.',
+        'restart',
+      ],
+      disabled: ['warn', 'The VB-CABLE device is disabled in Windows Device Manager.', 'enable-device'],
+      broken: [
+        'error',
+        `VB-CABLE is installed, but ${PNP_ERRORS[pnpError] || `Windows reports error code ${pnpError}`} (code ${pnpError}). Repair reinstalls it with VB-Audio's installer.`,
+        'repair-driver',
+      ],
+      incomplete: [
+        'error',
+        'VB-CABLE is only partly installed: Windows has its driver files but no working virtual microphone. Repair reinstalls it: approve the Windows prompt, then click “Install Driver”.',
+        'repair-driver',
+      ],
+      missing: [
+        'error',
+        lastError
+          ? `Last attempt failed: ${lastError} Click Install now to try again.`
+          : 'Not installed yet. Click Install now: approve the Windows prompt, then click “Install Driver”.',
+        'install-driver',
+      ],
+    }[driverState];
+    checks.push({ id: 'driver', title: 'Virtual microphone driver', status: DRIVER[0], detail: DRIVER[1], fix: DRIVER[2] });
 
     const defRen2 = st.render.find((r) => r.defaults[0]);
     checks.push({
@@ -471,13 +566,39 @@ class SystemController {
     if (!this.supported) return;
     const st = await this.exec(['status'], 8000);
     if (!st.ok) return;
-    const cable = st.capture.find((c) => isCableCapture(c.name));
+    const cable = findCable(st.capture, isCableCapture, /cable output/i);
     if (!cable || !cable.defaults.some(Boolean)) return;
     const real =
       st.capture.find((c) => c.id === this.state.realMic?.id && c.state === STATE_ACTIVE) ||
       st.capture.find((c) => c.name === this.state.realMic?.name && c.state === STATE_ACTIVE) ||
       st.capture.find((c) => c.state === STATE_ACTIVE && !isVirtual(c.name));
     if (real) await this.exec(['set-default', real.id], 8000);
+  }
+
+  async enableDevice() {
+    this.enableAttempted = false;
+    return this.check({ autoFix: true });
+  }
+
+  /** Plain-text report for support: what Windows reports, what Echopad concluded, what it changed. */
+  diagnostics() {
+    const lines = [];
+    lines.push(`Echopad ${app.getVersion()} on ${this.lastRaw?.os || os.release()} (${os.arch()})`);
+    lines.push(`Generated ${new Date().toISOString()}`);
+    lines.push('');
+    for (const c of this.lastReport?.checks || []) lines.push(`[${c.status.toUpperCase()}] ${c.title}: ${c.detail}`);
+    const raw = this.lastRaw || {};
+    const ep = (e) => `  ${e.name} | state=${e.state}${e.defaults?.some(Boolean) ? ' | default' : ''}`;
+    lines.push('', 'Playback devices:', ...(raw.render || []).map(ep));
+    lines.push('Recording devices:', ...(raw.capture || []).map(ep));
+    lines.push('VB-CABLE device (Device Manager):', ...((raw.pnp || []).length ? raw.pnp.map((d) => `  ${d.name || d.queryError} | ${d.id || ''} | status=${d.status || ''} | error=${d.error ?? ''}`) : ['  none']));
+    lines.push(`Driver service: ${raw.driverService} | driver file: ${raw.driverFile}`);
+    lines.push(`Mic privacy: ${JSON.stringify(raw.micPrivacy || {})}`);
+    lines.push('Apps using microphones:', ...((raw.sessions || []).map((x) => `  ${x.process} → ${x.deviceName}${x.active ? ' (active)' : ''}`)));
+    const st = { ...this.state };
+    lines.push(`Install: ${JSON.stringify({ driverInstalledAt: st.driverInstalledAt, lastInstallError: st.lastInstallError, autoRepairAt: st.autoRepairAt, declined: st.autoInstallDeclined })}`);
+    lines.push('', 'Recent actions:', ...this.log.map((l) => `  ${new Date(l.at).toISOString()} [${l.kind}] ${l.text}`));
+    return lines.join('\n');
   }
 
   async fixPrivacy() {

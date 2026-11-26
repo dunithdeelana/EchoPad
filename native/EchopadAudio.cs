@@ -16,6 +16,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Management;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -172,6 +173,7 @@ namespace Echopad
                     case "fix-mic-privacy": Console.WriteLine(FixMicPrivacy()); return 0;
                     case "verify": Console.WriteLine(Verify(Arg(args, 1))); return 0;
                     case "run-installer": Console.WriteLine(RunInstaller(Arg(args, 1))); return 0;
+                    case "enable-pnp": Console.WriteLine(EnablePnp(Arg(args, 1))); return 0;
                     case "selftest": Console.WriteLine("{\"ok\":true,\"selftest\":true}"); return 0;
                     default: Console.WriteLine(Error("unknown command " + cmd)); return 2;
                 }
@@ -220,7 +222,7 @@ namespace Echopad
         {
             var list = new List<Endpoint>();
             IMMDeviceCollection col;
-            int mask = DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_UNPLUGGED;
+            int mask = DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_NOTPRESENT | DEVICE_STATE_UNPLUGGED;
             if (en.EnumAudioEndpoints(flow, mask, out col) != 0 || col == null) return list;
             int count;
             col.GetCount(out count);
@@ -293,7 +295,10 @@ namespace Echopad
             bool first = true;
             try { AppendSessions(sb, en, capture, ref first); } catch { }
             sb.Append("],\"micPrivacy\":").Append(MicPrivacyJson())
-              .Append(",\"driverService\":").Append(DriverServiceInstalled() ? "true" : "false").Append('}');
+              .Append(",\"driverService\":").Append(DriverServiceInstalled() ? "true" : "false")
+              .Append(",\"driverFile\":").Append(DriverFileExists() ? "true" : "false")
+              .Append(",\"pnp\":").Append(PnpJson())
+              .Append(",\"os\":").Append(J(Environment.OSVersion.VersionString)).Append('}');
             return sb.ToString();
         }
 
@@ -346,6 +351,70 @@ namespace Echopad
             }
             catch { }
             return false;
+        }
+
+        static bool DriverFileExists()
+        {
+            string drivers = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "drivers");
+            try { return Directory.GetFiles(drivers, "vbaudio_cable*.sys").Length > 0; } catch { return false; }
+        }
+
+        // The VB-CABLE device node as Device Manager sees it: present? error code (22 = disabled, 52 = signature, ...)
+        static string PnpJson()
+        {
+            var sb = new StringBuilder("[");
+            bool first = true;
+            try
+            {
+                string q = "SELECT Name, PNPDeviceID, Status, ConfigManagerErrorCode, Manufacturer FROM Win32_PnPEntity " +
+                           "WHERE PNPDeviceID LIKE '%VBAUDIOVAC%' OR Name LIKE '%VB-Audio Virtual%' OR Manufacturer LIKE '%VB-Audio%'";
+                using (var searcher = new ManagementObjectSearcher(q))
+                {
+                    searcher.Options.Timeout = TimeSpan.FromSeconds(8);
+                    foreach (ManagementObject mo in searcher.Get())
+                    {
+                        if (!first) sb.Append(',');
+                        first = false;
+                        object code = mo["ConfigManagerErrorCode"];
+                        sb.Append("{\"name\":").Append(J(Convert.ToString(mo["Name"])))
+                          .Append(",\"id\":").Append(J(Convert.ToString(mo["PNPDeviceID"])))
+                          .Append(",\"status\":").Append(J(Convert.ToString(mo["Status"])))
+                          .Append(",\"manufacturer\":").Append(J(Convert.ToString(mo["Manufacturer"])))
+                          .Append(",\"error\":").Append(code == null ? "0" : Convert.ToString(Convert.ToUInt32(code))).Append('}');
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!first) sb.Append(',');
+                sb.Append("{\"queryError\":").Append(J(ex.Message)).Append('}');
+            }
+            return sb.Append(']').ToString();
+        }
+
+        // Re-enable a device that is disabled in Device Manager (needs administrator; Windows asks for approval).
+        static string EnablePnp(string instanceId)
+        {
+            string pnputil = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "pnputil.exe");
+            var psi = new ProcessStartInfo(pnputil, "/enable-device \"" + instanceId + "\"")
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            try
+            {
+                using (var p = Process.Start(psi))
+                {
+                    p.WaitForExit();
+                    return "{\"ok\":" + (p.ExitCode == 0 ? "true" : "false") + ",\"exitCode\":" + p.ExitCode + "}";
+                }
+            }
+            catch (Win32Exception ex)
+            {
+                if (ex.NativeErrorCode == 1223) return "{\"ok\":false,\"error\":\"cancelled\"}";
+                return Error(ex.Message);
+            }
         }
 
         // ------------------------------------------------------------------ microphone privacy

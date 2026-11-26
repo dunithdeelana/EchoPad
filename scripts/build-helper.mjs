@@ -11,7 +11,7 @@ const outDir = path.join(root, 'resources', 'bin');
 const out = path.join(outDir, 'EchopadAudio.exe');
 fs.mkdirSync(outDir, { recursive: true });
 
-const refs = ['System.dll', 'System.IO.Compression.dll', 'System.IO.Compression.FileSystem.dll'];
+const refs = ['System.dll', 'System.Management.dll', 'System.IO.Compression.dll', 'System.IO.Compression.FileSystem.dll'];
 let compiler;
 let args;
 if (process.platform === 'win32') {

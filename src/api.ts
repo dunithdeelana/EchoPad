@@ -80,6 +80,7 @@ function createMockApi(): EchopadApi {
     systemLast: async () => ({ supported: false, phase: 'ready', checks: [], log: [] }),
     systemAction: async () => null,
     onSystemReport: () => () => {},
+    copyDiagnostics: async () => '',
     minimize: () => {},
     toggleMaximize: () => {},
     close: () => {},

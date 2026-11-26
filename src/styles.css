@@ -1715,3 +1715,11 @@ kbd {
 .setup-step.error {
   border-color: rgba(240, 68, 82, 0.35);
 }
+
+.health-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}

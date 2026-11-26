@@ -13,11 +13,14 @@ import {
 import { api } from '../api';
 import { engine } from '../audio';
 import { useStore } from '../store';
+import { ClipboardCopy } from 'lucide-react';
 import type { CheckStatus, FixAction, HealthCheck, HealthReport } from '../types';
 import { Logo } from './Chrome';
 
 const FIX_LABEL: Record<FixAction, string> = {
   'install-driver': 'Install now',
+  'repair-driver': 'Repair driver',
+  'enable-device': 'Turn device on',
   restart: 'Restart PC',
   'fix-privacy': 'Allow',
   'open-privacy': 'Open settings',
@@ -111,7 +114,7 @@ export function FixButton({ action }: { action: FixAction }) {
   }
   return (
     <button
-      className={`btn ${action === 'install-driver' || confirm ? 'primary' : 'secondary'} sm`}
+      className={`btn ${action === 'install-driver' || action === 'repair-driver' || confirm ? 'primary' : 'secondary'} sm`}
       disabled={busy}
       onClick={async () => {
         setBusy(true);
@@ -148,6 +151,11 @@ export function HealthView() {
   const checks = useAllChecks();
   const overall = overallStatus(health, checks);
   const [checking, setChecking] = useState(false);
+  const toast = useStore((s) => s.toast);
+  const copyReport = async () => {
+    const text = await api.copyDiagnostics();
+    toast(text ? 'success' : 'error', text ? 'Diagnostic report copied. Paste it wherever you need help.' : 'No report available.');
+  };
 
   const runCheck = async () => {
     setChecking(true);
@@ -207,6 +215,15 @@ export function HealthView() {
             ))}
           </ul>
         </section>
+      )}
+
+      {health?.supported && (
+        <div className="health-actions">
+          <button className="btn secondary" onClick={copyReport}>
+            <ClipboardCopy size={15} /> Copy diagnostic report
+          </button>
+          <span>Includes your audio devices and what Echopad found. No personal files.</span>
+        </div>
       )}
 
       <div className="tips">
