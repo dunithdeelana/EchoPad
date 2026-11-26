@@ -372,8 +372,9 @@ class SystemController {
     }
 
     const fixes = [];
-    const realCaptures = () => st.capture.filter((c) => c.state === STATE_ACTIVE && !isVirtual(c.name));
-    const realRenders = () => st.render.filter((r) => r.state === STATE_ACTIVE && !isVirtual(r.name));
+    // Leftover endpoints of a removed device can show up with no name; never treat those as real devices.
+    const realCaptures = () => st.capture.filter((c) => c.state === STATE_ACTIVE && c.name && !isVirtual(c.name));
+    const realRenders = () => st.render.filter((r) => r.state === STATE_ACTIVE && r.name && !isVirtual(r.name));
 
     // Remember the user's real devices before we change anything.
     const defCap = st.capture.find((c) => c.defaults[0]);
