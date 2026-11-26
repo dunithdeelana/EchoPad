@@ -13,7 +13,7 @@ import {
 import { api } from '../api';
 import { engine } from '../audio';
 import { useStore } from '../store';
-import { ClipboardCopy } from 'lucide-react';
+import { Bug, ClipboardCopy, FolderOpen } from 'lucide-react';
 import type { CheckStatus, FixAction, HealthCheck, HealthReport } from '../types';
 import { Logo } from './Chrome';
 
@@ -219,10 +219,13 @@ export function HealthView() {
 
       {health?.supported && (
         <div className="health-actions">
+          <ReportProblemButton />
           <button className="btn secondary" onClick={copyReport}>
-            <ClipboardCopy size={15} /> Copy diagnostic report
+            <ClipboardCopy size={15} /> Copy report
           </button>
-          <span>Includes your audio devices and what Echopad found. No personal files.</span>
+          <button className="btn ghost" onClick={() => api.openLogs()}>
+            <FolderOpen size={15} /> Open logs
+          </button>
         </div>
       )}
 
@@ -244,6 +247,30 @@ export function HealthView() {
         </ul>
       </div>
     </div>
+  );
+}
+
+/** Saves a report, copies it, and opens a pre-filled GitHub issue (Windows user name removed). */
+export function ReportProblemButton({ compact }: { compact?: boolean }) {
+  const toast = useStore((s) => s.toast);
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className={`btn ${compact ? 'ghost sm' : 'primary'}`}
+      disabled={busy}
+      title="Opens a pre-filled problem report on GitHub with your logs. Your Windows user name is removed."
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await api.reportProblem();
+          toast('success', 'Report opened in your browser. Click “Submit new issue” to send it. A full copy is on your clipboard.');
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? <Loader2 size={15} className="spin" /> : <Bug size={15} />} Report problem
+    </button>
   );
 }
 
@@ -311,7 +338,11 @@ export function SetupOverlay({ onDone }: { onDone(): void }) {
           })}
         </div>
         <div className="modal-footer">
-          <span className="footer-note">Echopad keeps checking and fixes problems automatically.</span>
+          {failed ? (
+            <ReportProblemButton compact />
+          ) : (
+            <span className="footer-note">Echopad keeps checking and fixes problems automatically.</span>
+          )}
           <div className="spacer" />
           <button className="btn primary" onClick={onDone} disabled={installing}>
             {ready ? 'Start using Echopad' : 'Continue in background'}
