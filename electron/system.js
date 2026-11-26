@@ -295,7 +295,11 @@ class SystemController {
             ? 'The Windows permission prompt was declined.'
             : res.error === 'signature'
               ? 'The downloaded driver failed its signature check, so it was not installed.'
-              : `Driver setup failed: ${res.error}`;
+              : res.error === 'already-running'
+                ? 'VB-Audio’s installer is already open. Echopad brought it to the front: click “Install Driver” in it.'
+                : res.error === 'exit-code'
+                  ? `VB-Audio’s installer ended with error code ${res.exitCode}. It may have been closed before “Install Driver” was clicked.`
+                  : `Driver setup failed: ${res.error}`;
         this.addLog(msg, 'error');
         this.state.lastInstallError = msg;
         // Don't re-open the installer on every launch if the user said no; the Health page offers it again.
@@ -533,7 +537,7 @@ class SystemController {
     checks.push({
       id: 'speakers',
       title: 'Your speakers',
-      status: defRen2 && cableRender && defRen2.id === cableRender.id ? 'warn' : 'ok',
+      status: !defRen2 || (cableRender && defRen2.id === cableRender.id) ? 'warn' : 'ok',
       detail: defRen2 ? `Windows plays sound through “${defRen2.name}”.` : 'No playback device found.',
       fix: null,
     });

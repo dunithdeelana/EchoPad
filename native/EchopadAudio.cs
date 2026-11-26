@@ -157,6 +157,8 @@ namespace Echopad
         static readonly Guid IID_IAudioSessionManager2 = new Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
 
         [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropVariant pvar);
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
         [STAThread]
         static int Main(string[] args)
@@ -566,6 +568,19 @@ namespace Echopad
             if (!IsTrustedVbAudio(setup, out trust, out signer))
                 return "{\"ok\":false,\"error\":\"signature\",\"trust\":" + trust + ",\"signer\":" + J(signer) + "}";
 
+            // Only one VB-Audio installer can run at a time (it uses a mutex); a second copy exits at once with -1.
+            // If one is already open (maybe behind other windows), bring it to the front instead.
+            foreach (var running in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(setup)))
+            {
+                try
+                {
+                    IntPtr h = running.MainWindowHandle;
+                    if (h != IntPtr.Zero) { ShowWindow(h, 9); SetForegroundWindow(h); }
+                }
+                catch { }
+                return "{\"ok\":false,\"error\":\"already-running\"}";
+            }
+
             // VB-Audio's own, unmodified installer with its own window and license.
             var psi = new ProcessStartInfo(setup)
             {
@@ -578,7 +593,9 @@ namespace Echopad
                 using (var p = Process.Start(psi))
                 {
                     p.WaitForExit();
-                    return "{\"ok\":true,\"exitCode\":" + p.ExitCode + ",\"signer\":" + J(signer) + "}";
+                    bool ok = p.ExitCode == 0;
+                    return "{\"ok\":" + (ok ? "true" : "false") + (ok ? "" : ",\"error\":\"exit-code\"") +
+                           ",\"exitCode\":" + p.ExitCode + ",\"signer\":" + J(signer) + "}";
                 }
             }
             catch (Win32Exception ex)
