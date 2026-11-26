@@ -19,6 +19,7 @@ const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { SystemController } = require('./system');
+const { log, scrub } = require('./logger');
 
 const APP_NAME = 'Echopad';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'webm'];
@@ -391,6 +392,29 @@ function registerIpc() {
     clipboard.writeText(text);
     return text;
   });
+  // One click: save the report, copy it, and open a pre-filled GitHub issue for the maintainers.
+  ipcMain.handle('system:report-problem', async () => {
+    if (!system) return null;
+    await system.check({ autoFix: false });
+    const full = scrub(system.diagnostics());
+    const file = system.saveSnapshot('user clicked Report problem');
+    clipboard.writeText(full);
+    const report = system.lastReport || {};
+    const failing = (report.checks || []).filter((c) => c.status === 'error' || c.status === 'warn').map((c) => c.title);
+    const title = `Problem report: ${failing.join(', ') || 'setup'} (Echopad ${app.getVersion()})`;
+    const limit = 6000;
+    const body =
+      (full.length > limit
+        ? `${full.slice(0, limit)}\n\n…(truncated — the full report is on your clipboard; paste it in a comment)`
+        : full) + '\n\n_Sent from Echopad’s Report problem button._';
+    const repo = 'https://github.com/dunithdeelana/EchoPad';
+    const url = `${repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent('```\n' + body + '\n```')}`;
+    await shell.openExternal(url);
+    log.info('opened problem report', { file });
+    return { file };
+  });
+  ipcMain.handle('system:open-logs', async () => shell.openPath(log.dir()));
+  ipcMain.on('app:log', (_e, level, msg) => log[level === 'error' ? 'error' : 'info'](`[ui] ${String(msg).slice(0, 2000)}`));
   ipcMain.handle('system:last', async () => system?.lastReport ?? null);
   ipcMain.handle('system:action', async (_e, action) => {
     if (!system) return null;
@@ -434,7 +458,15 @@ app.on('second-instance', (_e, argv) => {
   else showWindow();
 });
 
+process.on('uncaughtException', (err) => log.error('uncaught exception', String(err?.stack || err)));
+process.on('unhandledRejection', (err) => log.error('unhandled rejection', String(err?.stack || err)));
+
 app.whenReady().then(() => {
+  log.info(`Echopad ${app.getVersion()} starting`, {
+    os: `${require('node:os').release()} ${process.arch}`,
+    argv: process.argv.slice(1),
+    packaged: app.isPackaged,
+  });
   if (process.argv.includes(RESTORE_FLAG)) {
     restoreAudioAndQuit();
     return;

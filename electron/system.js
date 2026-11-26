@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const os = require('node:os');
 const { execFile } = require('node:child_process');
+const { log, setupApiExcerpt } = require('./logger');
 
 const CABLE_PAGE = 'https://vb-audio.com/Cable/';
 const KNOWN_PACKS = [
@@ -177,15 +178,15 @@ function createFakeWindows() {
         sim.serviceOnly = false;
         addCable();
         sim.driver = true;
-        return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
+        return { ok: true, exitCode: 0, signer: 'CN=BUREL VINCENT Entrepreneur individuel' };
       }
       if (process.env.ECHOPAD_FAKE_INSTALL === 'reboot') {
         sim.serviceOnly = true; // driver installed, devices appear only after a restart
-        return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
+        return { ok: true, exitCode: 0, signer: 'CN=BUREL VINCENT Entrepreneur individuel' };
       }
       addCable();
       sim.driver = true;
-      return { ok: true, exitCode: 0, signer: 'CN=Vincent Burel' };
+      return { ok: true, exitCode: 0, signer: 'CN=BUREL VINCENT Entrepreneur individuel' };
     }
     return { ok: false, error: 'unknown' };
   };
@@ -199,7 +200,14 @@ class SystemController {
     this.onReport = onReport;
     this.hooks = hooks;
     this.supported = process.platform === 'win32' || process.env.ECHOPAD_FAKE_SYSTEM === '1';
-    this.exec = process.platform === 'win32' ? runHelper : createFakeWindows();
+    const rawExec = process.platform === 'win32' ? runHelper : createFakeWindows();
+    this.exec = async (args, timeout) => {
+      const t0 = Date.now();
+      const res = await rawExec(args, timeout);
+      if (args[0] !== 'status') log.info(`helper ${args.join(' ')} → ${Date.now() - t0}ms`, res);
+      else if (!res.ok) log.error('helper status failed', res);
+      return res;
+    };
     this.state = loadState();
     this.log = [];
     this.installing = false;
@@ -210,6 +218,7 @@ class SystemController {
   }
 
   addLog(text, kind = 'fix') {
+    log[kind === 'error' ? 'error' : 'info'](`[${kind}] ${text}`);
     this.log.unshift({ at: Date.now(), text, kind });
     this.log = this.log.slice(0, 40);
   }
@@ -237,6 +246,7 @@ class SystemController {
     for (const url of await this.findPackUrl()) {
       try {
         progress?.(`Downloading the virtual audio driver from vb-audio.com…`);
+        log.info(`downloading ${url}`);
         const res = await net.fetch(url);
         if (!res.ok) {
           lastErr = `HTTP ${res.status}`;
@@ -248,6 +258,7 @@ class SystemController {
           continue;
         }
         await fsp.writeFile(file, buf);
+        log.info(`downloaded ${buf.length} bytes → ${file}`);
         return file;
       } catch (err) {
         lastErr = String(err?.message || err);
@@ -270,7 +281,10 @@ class SystemController {
       this.hooks.beforeInstaller?.();
       let res;
       try {
+        log.info('starting VB-Audio installer');
+        const t0 = Date.now();
         res = await this.exec(['run-installer', zip], 15 * 60 * 1000);
+        log.info(`VB-Audio installer returned after ${Math.round((Date.now() - t0) / 1000)}s`, res);
       } finally {
         this.hooks.afterInstaller?.();
       }
@@ -296,6 +310,7 @@ class SystemController {
       saveState(this.state);
       // Devices usually appear within seconds; give Windows time to register them.
       this.emitPhase('installing', 'Waiting for Windows to register the virtual microphone…');
+      log.info('waiting for the virtual devices to appear');
       for (let i = 0; i < 20; i++) {
         const st = await this.exec(['status']);
         if (st.ok && st.capture.some((c) => isCableCapture(c.name) && c.state === STATE_ACTIVE)) break;
@@ -363,6 +378,7 @@ class SystemController {
     if (defRen && !isVirtual(defRen.name)) this.state.realSpeaker = { id: defRen.id, name: defRen.name };
 
     this.lastRaw = st;
+    this.logStatusIfChanged(st);
     let cableRender = findCable(st.render, isCableRender, /cable input/i);
     let cableCapture = findCable(st.capture, isCableCapture, /cable output/i);
 
@@ -380,8 +396,10 @@ class SystemController {
     const bootTime = Date.now() - os.uptime() * 1000;
     const installedThisBoot = !!this.state.driverInstalledAt && this.state.driverInstalledAt > bootTime;
     const pnpList = st.pnp || [];
+    // The VB-CABLE device itself is ROOT\MEDIA\nnnn made by "VB-Audio Software"; the SWD\MMDEVAPI rows are its endpoints.
     const pnpDev =
-      pnpList.find((d) => /VBAUDIOVAC/i.test(d.id || '') || /vb-audio/i.test(`${d.name} ${d.manufacturer}`)) ||
+      pnpList.find((d) => /^ROOT\\/i.test(d.id || '') && /vb-audio/i.test(`${d.name} ${d.manufacturer}`)) ||
+      pnpList.find((d) => /VBAUDIOVAC/i.test(d.id || '') || /vb-audio software/i.test(d.manufacturer || '')) ||
       // A root media device with an error and no driver bound has no VB-Audio name yet.
       pnpList.find((d) => /^ROOT\\MEDIA\\/i.test(d.id || '') && Number(d.error) > 0 && !/realtek|nvidia|amd|intel/i.test(`${d.name} ${d.manufacturer}`));
     const pnpError = pnpDev ? Number(pnpDev.error) || 0 : 0;
@@ -393,6 +411,22 @@ class SystemController {
     else if (pnpError) driverState = 'broken';
     else if (installedThisBoot) driverState = 'restart';
     else if (driverTraces || cableRender || cableCapture) driverState = 'incomplete';
+    if (driverState !== this.lastDriverState) {
+      log.info(`driver state: ${this.lastDriverState || '(start)'} → ${driverState}`, {
+        cableRender: cableRender && `${cableRender.name} [${cableRender.state}]`,
+        cableCapture: cableCapture && `${cableCapture.name} [${cableCapture.state}]`,
+        pnpDev,
+        driverService: st.driverService,
+        driverFile: st.driverFile,
+        installedThisBoot,
+      });
+      this.lastDriverState = driverState;
+    }
+    // A repair was attempted and the driver is still not working: keep a full report automatically.
+    if ((driverState === 'broken' || driverState === 'incomplete') && this.installAttempted && !this.snapshotSaved) {
+      this.snapshotSaved = true;
+      this.saveSnapshot(`driver still ${driverState} after install/repair`);
+    }
 
     // Disabled in Device Manager → turn it back on (Windows asks for approval once).
     if (autoFix && driverState === 'disabled' && !this.enableAttempted) {
@@ -481,7 +515,8 @@ class SystemController {
       ],
       incomplete: [
         'error',
-        'VB-CABLE is only partly installed: Windows has its driver files but no working virtual microphone. Repair reinstalls it: approve the Windows prompt, then click “Install Driver”.',
+        (lastError ? `Last attempt failed: ${lastError} ` : '') +
+          'VB-CABLE is only partly installed: Windows has its driver files but no working virtual microphone. Repair reinstalls it: approve the Windows prompt, then click “Install Driver”.',
         'repair-driver',
       ],
       missing: [
@@ -594,6 +629,40 @@ class SystemController {
   }
 
   /** Plain-text report for support: what Windows reports, what Echopad concluded, what it changed. */
+  logStatusIfChanged(st) {
+    const sig = JSON.stringify([
+      (st.render || []).map((e) => [e.name, e.state, e.defaults]),
+      (st.capture || []).map((e) => [e.name, e.state, e.defaults]),
+      st.pnp,
+      st.driverService,
+      st.driverFile,
+      st.micPrivacy,
+    ]);
+    if (sig === this.lastStatusSig) return;
+    this.lastStatusSig = sig;
+    log.info('windows audio status changed', {
+      render: (st.render || []).map((e) => `${e.name} [${e.state}]${e.defaults?.[0] ? ' *' : ''}`),
+      capture: (st.capture || []).map((e) => `${e.name} [${e.state}]${e.defaults?.[0] ? ' *' : ''}`),
+      pnp: st.pnp,
+      driverService: st.driverService,
+      driverFile: st.driverFile,
+      micPrivacy: st.micPrivacy,
+      os: st.os,
+    });
+  }
+
+  /** Save a full diagnostic report next to the log (done automatically when something fails). */
+  saveSnapshot(reason) {
+    try {
+      const file = path.join(log.dir(), `report-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`);
+      fs.writeFileSync(file, `Reason: ${reason}\n\n${this.diagnostics()}`);
+      log.info(`saved diagnostic report ${file}`);
+      return file;
+    } catch {
+      return null;
+    }
+  }
+
   diagnostics() {
     const lines = [];
     lines.push(`Echopad ${app.getVersion()} on ${this.lastRaw?.os || os.release()} (${os.arch()})`);
@@ -611,6 +680,9 @@ class SystemController {
     const st = { ...this.state };
     lines.push(`Install: ${JSON.stringify({ driverInstalledAt: st.driverInstalledAt, lastInstallError: st.lastInstallError, autoRepairAt: st.autoRepairAt, declined: st.autoInstallDeclined })}`);
     lines.push('', 'Recent actions:', ...this.log.map((l) => `  ${new Date(l.at).toISOString()} [${l.kind}] ${l.text}`));
+    lines.push('', 'Raw Windows status:', JSON.stringify(this.lastRaw || {}, null, 1));
+    lines.push('', '--- Windows driver install log (setupapi.dev.log) ---', setupApiExcerpt());
+    lines.push('', '--- Echopad log (latest) ---', log.tail(150));
     return lines.join('\n');
   }
 

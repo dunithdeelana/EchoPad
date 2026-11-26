@@ -1,0 +1,54 @@
+name: Windows end-to-end test
+
+# Runs the packaged Echopad.exe on a throwaway Windows VM: it downloads, verifies and runs VB-Audio's
+# installer itself (a UI-automation script clicks "Install Driver" like a user would), then the
+# "driver files present but device missing" case is recreated and must be detected and repaired.
+on:
+  push:
+    branches: ['ci/**']
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run pack
+      - name: Start Windows audio services
+        shell: pwsh
+        run: |
+          foreach ($s in 'AudioEndpointBuilder','Audiosrv') { Set-Service $s -StartupType Automatic; Start-Service $s -ErrorAction Continue }
+      - name: Verify VB-Audio's real installer passes Echopad's signature check
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip -OutFile vb.zip
+          Expand-Archive vb.zip vb
+          $v = release\win-unpacked\resources\bin\EchopadAudio.exe verify vb\VBCABLE_Setup_x64.exe
+          Write-Host $v
+          if (-not ($v | ConvertFrom-Json).ok) { throw "signature check rejects VB-Audio's installer" }
+      - name: End-to-end (fresh PC, then half-installed driver)
+        shell: pwsh
+        run: |
+          npm i --no-save playwright@1.57.0
+          $clicker = Start-Job -FilePath scripts\ci\click-vbcable.ps1
+          node scripts/ci/e2e-windows.cjs
+          $code = $LASTEXITCODE
+          Write-Host "`n---- clicker output ----"
+          Receive-Job $clicker
+          Stop-Job $clicker
+          exit $code
+      - name: Windows driver install log (tail)
+        if: always()
+        shell: pwsh
+        run: Get-Content C:\Windows\INF\setupapi.dev.log -Tail 150
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: e2e-*.png
