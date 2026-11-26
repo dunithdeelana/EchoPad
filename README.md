@@ -36,7 +36,7 @@ npm run dist       # build release/Echopad-Setup-<version>.exe
 `npm run dist` works on Windows, macOS and Linux. It uses electron-builder to package
 `release/win-unpacked`, stamps the icon and version info into `Echopad.exe` (`scripts/afterPack.mjs`),
 then compiles `installer/echopad.nsi` with NSIS (`scripts/build-installer.mjs`). Wine is not required.
-Pushing a `v*` tag also builds the installer on GitHub Actions (`.github/workflows/build.yml`).
+Every push to `main` also builds the installer on GitHub Actions and publishes it as a GitHub Release for the version in `package.json` (`.github/workflows/build.yml`).
 
 ### Layout
 
