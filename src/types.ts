@@ -108,6 +108,9 @@ export interface EchopadApi {
   systemAction(action: FixAction): Promise<unknown>;
   onSystemReport(cb: (r: HealthReport) => void): () => void;
   copyDiagnostics(): Promise<string>;
+  reportProblem(): Promise<{ file: string | null } | null>;
+  openLogs(): Promise<unknown>;
+  log(level: 'info' | 'error', msg: string): void;
   minimize(): void;
   toggleMaximize(): void;
   close(): void;
